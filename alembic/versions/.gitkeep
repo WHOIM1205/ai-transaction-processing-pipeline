@@ -1,0 +1,2 @@
+# Keeps the `versions/` directory under version control. Alembic migration
+# scripts live here (see 0001_initial_models.py).

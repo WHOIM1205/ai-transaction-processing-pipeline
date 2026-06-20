@@ -1,0 +1,32 @@
+# Files excluded from the Docker build context.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# A smaller build context means faster builds and prevents local-only or
+# secret files (like a real `.env`) from leaking into the image.
+
+# Python caches / build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local secrets — never bake real credentials into the image
+.env
+
+# Version control / IDE / OS noise
+.git/
+.gitignore
+.idea/
+.vscode/
+.DS_Store
+
+# Docs that don't belong in the runtime image
+*.md

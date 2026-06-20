@@ -1,0 +1,28 @@
+# Keeps local-only and generated files out of version control.
+
+# Local secrets — only .env.example is committed
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Local agent config, runtime artifacts, and logs
+.claude/
+uploads/
+data/
+*.log

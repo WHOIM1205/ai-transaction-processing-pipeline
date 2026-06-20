@@ -1,0 +1,29 @@
+# Python dependencies for Phase 1 (bootstrap).
+# Pinned to specific versions so `docker compose up` is reproducible — the same
+# image builds identically on the reviewer's machine and ours.
+# Only foundation packages are listed; LLM / data-processing libs arrive later.
+
+# --- Web framework + ASGI server ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20        # required by FastAPI for multipart/form-data uploads
+
+# --- Database: SQLAlchemy 2.x ORM + Postgres driver + migrations ---
+SQLAlchemy==2.0.36
+psycopg2-binary==2.9.10        # binary wheel: no system build deps needed
+alembic==1.14.0
+
+# --- Configuration ---
+pydantic-settings==2.7.1       # pulls in pydantic 2.x
+
+# --- Async task queue ---
+celery==5.4.0
+redis==5.2.1                   # Celery broker/backend client + health check
+
+# --- LLM (Gemini 1.5 Flash) ---
+google-generativeai==0.8.3     # imported lazily; only used when GEMINI_API_KEY is set
+
+# --- Dev / test ---
+pytest==8.3.4
+httpx==0.28.1                  # required by FastAPI's TestClient
+

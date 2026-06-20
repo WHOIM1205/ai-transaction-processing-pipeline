@@ -1,0 +1,115 @@
+# Orchestrates the full Phase 1 stack so the whole system starts with a single
+# `docker compose up` — no manual setup steps (a hard requirement of the brief).
+#
+# Four services: postgres, redis, api, worker.
+# Startup ordering is enforced with healthchecks + `depends_on: service_healthy`
+# so the API and worker only start once their dependencies are actually ready.
+
+# Shared environment for the app containers (api + worker). A YAML anchor keeps
+# it DRY. The `${VAR:-default}` syntax means `docker compose up` works with NO
+# .env file, while still allowing overrides. Note the hosts are the Compose
+# SERVICE NAMES (`postgres`, `redis`) — that is how containers reach each other.
+x-app-env: &app-env
+  APP_ENV: ${APP_ENV:-local}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: 5432
+  POSTGRES_USER: ${POSTGRES_USER:-postgres}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+  POSTGRES_DB: ${POSTGRES_DB:-transactions}
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  REDIS_DB: 0
+  # Optional: set GEMINI_API_KEY in your shell/.env to enable LLM classification
+  # + narrative. Left blank => graceful degradation (no LLM, job still completes).
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  GEMINI_MODEL: ${GEMINI_MODEL:-gemini-1.5-flash}
+
+services:
+  # --- PostgreSQL: durable system of record --------------------------------
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-transactions}
+    volumes:
+      # Named volume so data survives container restarts/rebuilds.
+      - pgdata:/var/lib/postgresql/data
+    # No host port published: the api/worker reach Postgres by service name on the
+    # compose network. Avoids conflicts with a Postgres already running on the host.
+    healthcheck:
+      # `pg_isready` is the canonical "is Postgres accepting connections?" probe.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-transactions}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # --- Redis: Celery broker + result backend -------------------------------
+  redis:
+    image: redis:7-alpine
+    # No host port published: only the api/worker use Redis, via the compose
+    # network. Avoids conflicts with a Redis already running on the host.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # --- API: FastAPI HTTP layer ---------------------------------------------
+  api:
+    build: .
+    # Apply migrations, THEN serve. `alembic upgrade head` is a no-op in Phase 1
+    # (no versions yet) but proves the migration path works and guarantees the
+    # schema is current before the API serves traffic in later phases.
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    environment:
+      <<: *app-env
+    volumes:
+      # Shared with the worker (claim-check): API writes uploads, worker reads.
+      - uploads:/data/uploads
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # Liveness probe hits the cheap /health endpoint (curl installed in image).
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s   # allow time for migrations + uvicorn boot
+
+  # --- Worker: Celery process (configuration only in Phase 1) --------------
+  worker:
+    build: .
+    # Runs the configured Celery app. No tasks are registered yet, so it simply
+    # connects to the broker and idles, ready for Phase 2 task code.
+    command: celery -A app.workers.celery_app:celery_app worker --loglevel=INFO
+    environment:
+      <<: *app-env
+    volumes:
+      # Same uploads volume as the API so the worker can read uploaded files.
+      - uploads:/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # `inspect ping` confirms the worker is connected to the broker and
+      # responsive. Generous start_period so the worker has time to boot.
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app:celery_app inspect ping || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  pgdata:    # persists PostgreSQL data across `docker compose down`/`up`
+  uploads:   # raw uploaded CSVs, shared between api and worker
